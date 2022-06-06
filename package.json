@@ -1,0 +1,24 @@
+{
+  "name": "sql-migrations",
+  "version": "1.0.0",
+  "description": "migrations package for node.js",
+  "main": "migrate.js",
+  "scripts": {
+    "test": "test/test.js"
+  },
+  "keywords": [
+    "sql",
+    "migrations",
+    "migrate",
+    "sql",
+    "mysql",
+    "postgree",
+    "database",
+    "node"
+  ],
+  "author": "semir.mujic",
+  "license": "ISC",
+  "dependencies": {
+    "pg": "^8.7.3"
+  }
+}
