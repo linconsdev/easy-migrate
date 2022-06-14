@@ -67,6 +67,8 @@ module.exports = class Definition {
             if (this.builders[driver][builderName]) {
                 this.sql.query = this.builders[driver][builderName](this);
                 this.sql.build = true
+
+                if (typeof this.sql.query == 'array' || this.sql.query instanceof Array) this.sql.query = this.sql.query.join("\n")
             } else
                 throw new Error(`No query builder for action driver "${builderName}"`)
         } else {
@@ -76,6 +78,10 @@ module.exports = class Definition {
         return this
     }
 
+    /**
+     * Method runs build query against database 
+     * @returns Promise
+     */
     async run() {
         if (!this.sql.build) this.build()
 

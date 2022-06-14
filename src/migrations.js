@@ -1,16 +1,25 @@
 const path = require('path')
 const fs = require('fs')
-
-
 const Schema = require('./schema')
 
-class Migrations{
-    constructor(config = require('../test/config')) {
+
+function migrationSQLQueryHead(name, path, title, rollback, database = null, host = null) {
+    return `--MIGRATION: ${name}
+--FILE: ${path}
+--DEFINITION: ${title}
+--ROLLBACK: ${rollback ? 'TRUE' : 'FALSE'}
+--DATABASE: "${database}" on host "${host}"\n\n`
+}
+
+module.exports = class Migrations{
+    constructor(config) {
         this.config = {
+            root: null,
             connection: null,
             toSql: false,
             toSqlPath: null,
-            recrusive: false
+            recrusive: false,
+            logToConsole: false,
         }
         this.connections = {}
         this.directories = []
@@ -20,18 +29,6 @@ class Migrations{
         this.up = []
         this.down = []
 
-        
-
-        //functions that help in migration process
-        this.migrators = {
-            connectionSet: (connectionName) => {
-                if (connectionName == 'default') return this.connections[this.config.connection]
-                else if (connectionName in this.connections) return this.connections[connectionName]
-                else throw new Error(`Connection ${connectionName} is not found in database connections configurations`)
-            },
-            
-        }
-
         //Setting migrations config
         this.config.connection = config.default
         this.connections = config.connections
@@ -39,6 +36,15 @@ class Migrations{
             throw new Error(`Default connection '${this.config.connection}' is not found in connections.`)
         else
             this.connections.default = this.connections[this.config.connection]
+
+        if (config.root) { 
+            this.fromDirectories(config.root)
+            this.config.root = root
+        }
+        if (config.recrusive) this.recrusive(config.recrusive)
+        
+        
+        if (config.autoLoad) this.loadMigrations()
     }
 
     /**
@@ -97,7 +103,8 @@ class Migrations{
                     if (fs.statSync(uri).isFile() && path.extname(uri) == '.js') {
                         this.migrations.push({
                             file,
-                            uri
+                            uri,
+                            run: false
                         })
                     } else if (fs.statSync(uri).isDirectory() && this.config.recrusive) {
                         this.loadMigrations([uri], true)
@@ -109,17 +116,27 @@ class Migrations{
             if (fs.statSync(uri).isFile() && path.extname(uri) == '.js') {
                 this.migrations.push({
                     file: path.basename(uri),
-                    uri
+                    uri,
+                    run: false
                 })
             }
         })
-        this.migrations.sort((a, b) => { 
-            return a.file.localeCompare(b.file) 
-        })
+        this.migrations.sort((a, b) => {  return a.file.localeCompare(b.file) })
         return this
     }
 
-    migrate(migration, rollback = false) {
+    /**
+     * Method that migrates one migration/file completly
+     * @param {Object} migration migration registered object with name and uri { name: 'migration', uri: 'c:\migration.js' }
+     * @param {Boolean} rollback should migration be rolledback
+     * @returns 
+     */
+    async migrate(migration, rollback = false) {
+        if (!migration.run)
+            throw new Error(`Migration ${migration.file} has already been ran`)
+        console.log(`Migrating ${migration.file}`)
+        let start_time = process.hrtime()
+
         let { name, description, up, down } = require(migration.uri)
 
         if (!(up instanceof Function) || !(down instanceof Function)) 
@@ -127,29 +144,21 @@ class Migrations{
         
         let schema = new Schema(name ? name : migration.file, migration.uri)
             schema.connections(this.connections)
+            schema.rollback = rollback
 
         if (!rollback)  up(schema)
         else            down(schema)
 
-        let queryToExecute = `--MIGRATION: ${schema.name}\n--FILE: ${schema.path}\n--ROLLBACK: ${rollback ? 'TRUE' : 'FALSE'}\n\n`
-        let queries = []
-
-        schema.definitions.forEach(definition => {
-            definition.run()
-                .then(console.log)
-                .catch(console.log)
-
-            queries = queries.concat(definition.sql.query)
+        return await new Promise(async (resolve, reject) => {
+            this.runDefinitions(schema, [...schema.definitions])
+                .then(success => {
+                    let total_time = process.hrtime(start_time)
+                    migration.run = true
+                    console.log(`Migration ${migration.file} run successfully in ${total_time}ms`)
+                    resolve(success)
+                })
+                .catch(error => { reject(error)})
         })
-
-        queryToExecute += queries.join(`;\n\r`)
-
-        if (this.config.toSql) {
-            fs.writeFileSync(path.join(this.config.toSqlPath, schema.name + '.sql'), queryToExecute)
-        } else {
-            console.log("QUERY DATABASE")
-        }
-        return this
     }
 
     /**
@@ -166,13 +175,40 @@ class Migrations{
             throw new Error(`Path provided to toSQL method must be directory. It is location where sql queries will be outputed!`)
         return this
     }
+
+
+    async runDefinitions(schema, definitions, i = 0) {
+        let definition = definitions.shift()
+        i++
+        return await new Promise((resolve, reject) => {
+            if (!definition.title) definition.title = `schema_definition_${i}`
+            if (this.config.toSql) {
+                let definitionQueryString = migrationSQLQueryHead(
+                    schema.name,
+                    schema.path,
+                    definition.title,
+                    schema.rollback,
+                    definition.connection.database,
+                    definition.connection.host
+                )
+                if (this.config.logToConsole)
+                    console.log(`Dumping schema definition "${definition.title}" with action "${definition.action}" to .sql file.`)
+                fs.writeFileSync(
+                    path.join(this.config.toSqlPath, `${path.basename(schema.path).replace('.js','_')}${definition.title}.sql`),
+                    definitionQueryString + definition.query()
+                )
+                if (definitions.length == 0) resolve(true)
+                else this.runDefinitions(schema, definitions, i).then(resolve).catch(reject)
+            } else {
+                if (this.config.logToConsole)
+                    console.log(`Running schema definition "${definition.title}" with action "${definition.action}"`)
+                definition.run().then(result => {
+                    if (definitions.length == 0) resolve(result)
+                    else this.runDefinitions(schema, definitions, i).then(resolve).catch(reject)
+                }).catch(error => {
+                    reject(error)
+                })               
+            }
+        })
+    }
 }
-
-
-module.exports = new Migrations()
-
-/*
-
-
-
-*/

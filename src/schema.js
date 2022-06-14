@@ -9,9 +9,14 @@ module.exports = class Schema {
             connection: 'default',
             connections: {},
             foreignKeysConstraints: true,
+            rollback: false,
         }
         this.definitions = []
     }
+
+    get rollback() { return this.config.rollback }
+    set rollback(value) { this.config.rollback = value }
+
 
     create(table, callback = (table) => { return table }) {
         let blueprint = new Blueprint(table)

@@ -2,7 +2,7 @@
   "name": "sql-migrations",
   "version": "1.0.0",
   "description": "migrations package for node.js",
-  "main": "migrate.js",
+  "main": "src/migrations.js",
   "scripts": {
     "test": "test/test.js"
   },
