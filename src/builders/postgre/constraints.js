@@ -1,4 +1,5 @@
 const singleConstraint = function(table, constraint) {
+    constraint.name = constraint.name.replaceAll('-','_')
     if (constraint.type == 'primary-key') {
         return `ALTER TABLE ${table} ADD CONSTRAINT ${constraint.name} PRIMARY KEY (${constraint.value.join(',')})`
     } else if (constraint.type == 'unique-key') {

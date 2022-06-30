@@ -3,19 +3,11 @@ const dataTypes = require('./data-types')
 function columnDefinition(column, withModifiers = true, inject = '') {
     let columnType = column.type
 
-    //console.log(column.type ,dataTypes[column.type])
+    console.log(column.type ,dataTypes[column.type])
 
-    switch (columnType.toLowerCase()) {
+    switch (columnType) {
         case 'float':
             columnType = 'NUMERIC';
-            break;
-
-        case 'string':
-            columnType = 'VARCHAR';
-            break;
-
-        case 'ipaddress':
-            columnType = 'INET';
             break;
     }
 
@@ -26,7 +18,7 @@ function columnDefinition(column, withModifiers = true, inject = '') {
     let colDefinition = ``
 
     switch (column.type) {
-        case 'string':
+        case 'varchar':
         case 'char':
             colDefinition += ` (${column.definition.size ? column.definition.size : 'MAX'})`
             break;

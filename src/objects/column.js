@@ -63,8 +63,9 @@ module.exports = class Column {
         return this
     }
 
-    default(value) {
+    default(value, raw = false) {
         this.modifiers.default = value
+        this.modifiers.isDefaultRaw = raw
         return this
     }
 
@@ -128,4 +129,8 @@ module.exports = class Column {
         return this
     }
 
+    primary() {
+        this.modifiers.primaryKey = true
+        return this
+    }
 }

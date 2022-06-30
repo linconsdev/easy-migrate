@@ -61,16 +61,16 @@ module.exports = class Definition {
      */
     build() {
         let driver = this.connection.driver
-        let builderName = require('./helpers/topascalcase')(this.action)
+        let builderAction = require('./helpers/topascalcase')(this.action)
 
         if (this.builders[driver]) {
-            if (this.builders[driver][builderName]) {
-                this.sql.query = this.builders[driver][builderName](this);
+            if (this.builders[driver][builderAction]) {
+                this.sql.query = this.builders[driver][builderAction](this);
                 this.sql.build = true
 
-                if (typeof this.sql.query == 'array' || this.sql.query instanceof Array) this.sql.query = this.sql.query.join("\n")
+                if (typeof this.sql.query == 'array' || this.sql.query instanceof Array) this.sql.query = this.sql.query.join(";\n")
             } else
-                throw new Error(`No query builder for action driver "${builderName}"`)
+                throw new Error(`No query builder for action driver "${builderAction}"`)
         } else {
             throw new Error(`No query builder for database driver "${driver}"`)
         }

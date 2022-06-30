@@ -25,6 +25,11 @@ module.exports = class Migrations{
         this.directories = []
         this.files = []
         this.migrations = []
+        this.table = {
+            name: null,
+            connection: null,
+            migrations: []
+        }
 
         this.up = []
         this.down = []
@@ -32,18 +37,18 @@ module.exports = class Migrations{
         //Setting migrations config
         this.config.connection = config.default
         this.connections = config.connections
-        if (!(this.config.connection in this.connections))
-            throw new Error(`Default connection '${this.config.connection}' is not found in connections.`)
-        else
-            this.connections.default = this.connections[this.config.connection]
+        if (!(this.config.connection in this.connections)) throw new Error(`Default connection '${this.config.connection}' is not found in connections.`)
+        else this.connections.default = this.connections[this.config.connection]
 
+        if (config.recrusive) this.recrusive(config.recrusive)
         if (config.root) { 
             this.fromDirectories(config.root)
-            this.config.root = root
+            this.config.root = config.root
         }
-        if (config.recrusive) this.recrusive(config.recrusive)
-        
-        
+
+        if (!config.table) throw new Error(`Migrations table name not provided!`)
+        else this.table.name = config.table
+
         if (config.autoLoad) this.loadMigrations()
     }
 
@@ -55,8 +60,19 @@ module.exports = class Migrations{
     fromDirectories(...directories) {
         directories.forEach(directory => {
             if (fs.statSync(directory).isDirectory()) {
-                this.directories.push(directory)
-               
+                if (!this.directories.includes(directory)) { 
+                    this.directories.push(directory)
+                }                
+                if (this.config.recrusive) {
+                    let directorySubdirs = []
+                    fs.readdirSync(directory).forEach(content => {
+                        let uri = path.join(directory, content)
+                        if (fs.statSync(uri).isDirectory()) {
+                            directorySubdirs.push(uri)
+                        }
+                        this.fromDirectories(...directorySubdirs)
+                    })
+                }
             } else 
                 throw new Error(`Path '${directory}' is not a dir (directory/folder).`)
         })
@@ -106,9 +122,7 @@ module.exports = class Migrations{
                             uri,
                             run: false
                         })
-                    } else if (fs.statSync(uri).isDirectory() && this.config.recrusive) {
-                        this.loadMigrations([uri], true)
-                    }
+                    } 
                 })
             }
         })
@@ -125,16 +139,32 @@ module.exports = class Migrations{
         return this
     }
 
+    
+    /**
+     * Method that sets config to output sql queries to files.
+     * Calling migrate method will output to files instead of querying database
+     * @param {String} path path to directory / folder
+     * @returns 
+     */
+    toSQL(path) {
+        if (fs.statSync(path).isDirectory()) {
+            this.config.toSql = true
+            this.config.toSqlPath = path
+        } else
+            throw new Error(`Path provided to toSQL method must be directory. It is location where sql queries will be outputed!`)
+        return this
+    }
+
     /**
      * Method that migrates one migration/file completly
      * @param {Object} migration migration registered object with name and uri { name: 'migration', uri: 'c:\migration.js' }
      * @param {Boolean} rollback should migration be rolledback
      * @returns 
      */
-    async migrate(migration, rollback = false) {
-        if (!migration.run)
+     async migrate(migration, rollback = false) {
+        if (migration.run)
             throw new Error(`Migration ${migration.file} has already been ran`)
-        console.log(`Migrating ${migration.file}`)
+        console.log(`%cMigrating ${migration.file}`, "color: blue")
         let start_time = process.hrtime()
 
         let { name, description, up, down } = require(migration.uri)
@@ -152,30 +182,41 @@ module.exports = class Migrations{
         return await new Promise(async (resolve, reject) => {
             this.runDefinitions(schema, [...schema.definitions])
                 .then(success => {
-                    let total_time = process.hrtime(start_time)
+                    console.log(`%cMigration ${migration.file} ran successfully in ${process.hrtime(start_time)}ms`,"color: green")
+
                     migration.run = true
-                    console.log(`Migration ${migration.file} run successfully in ${total_time}ms`)
                     resolve(success)
                 })
-                .catch(error => { reject(error)})
+                .catch(reject)
         })
     }
 
-    /**
-     * Method that sets config to output sql queries to files.
-     * Calling migrate method will output to files instead of querying database
-     * @param {String} path path to directory / folder
-     * @returns 
-     */
-    toSQL(path) {
-        if (fs.statSync(path).isDirectory()) {
-            this.config.toSql = true
-            this.config.toSqlPath = path
-        } else
-            throw new Error(`Path provided to toSQL method must be directory. It is location where sql queries will be outputed!`)
-        return this
-    }
 
+    /**
+     * Method that runs all provided migrations with provided options 
+     * @param {Array} migrations array of migration registered objects with name and uri { name: 'migration', uri: 'c:\migration.js' }
+     * @param {Object} options options that define how migrations should be executed
+     * @returns Promise
+     */
+    async runMigrations(options = { rollback: false, batch: null }, migrations = [...this.migrations]) {
+        return await new Promise((resolve, reject) => {
+            if (migrations.length == 0) {
+                console.log(`Migrations completed successfuly`)
+                resolve()
+            } else {
+                let migration = options.rollback ? migrations.pop() : migrations.shift()
+                this.migrate(migration, options.rollback).then(result => {
+                    if (migrations.length == 0) {
+                        console.log(`Migrations completed successfuly`)
+                        resolve(result)
+                    } else 
+                        this.runMigrations(options, migrations)
+                        .then(resolve)
+                        .catch(reject)
+                }).catch(reject)
+            }
+        })
+    }
 
     async runDefinitions(schema, definitions, i = 0) {
         let definition = definitions.shift()
@@ -209,6 +250,20 @@ module.exports = class Migrations{
                     reject(error)
                 })               
             }
+        })
+    }
+
+    async getMigrations() {
+        this.table.connection = new (require(`./drivers/${this.connections.default.driver}`))(this.connections.default)
+        return await new Promise((resolve, reject) => {
+            this.table.connection.migrations(this.table.name).then(results => {
+                this.table.migrations = results
+
+                if (this.table.migrations.length == 0) this.table.batch = 1;
+                else this.table.batch = this.table.migrations[this.table.migrations.length -1].migration_batch_number
+
+                resolve(results)
+            }).catch(reject)
         })
     }
 }
